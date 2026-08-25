@@ -146,7 +146,8 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 
 	txs := blockExec.mempool.ReapMaxBytesMaxGas(maxReapBytes, maxGas)
 	commit := lastExtCommit.ToCommit()
-	block, err := state.MakeBlock(height, txs, commit, evidence, proposerAddr)
+	cRoot, cCols, cCoeffs, _ := ComputeCDAHeader(nil)
+	block, err := state.MakeBlock(height, txs, commit, evidence, proposerAddr, cRoot, cCols, cCoeffs)
 	if err != nil {
 		return nil, err
 	}
@@ -164,14 +165,6 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 		},
 	)
 	if err != nil {
-		// The App MUST ensure that only valid (and hence 'processable') transactions
-		// enter the mempool. Hence, at this point, we can't have any non-processable
-		// transaction causing an error.
-		//
-		// Also, the App can simply skip any transaction that could cause any kind of trouble.
-		// Either way, we cannot recover in a meaningful way, unless we skip proposing
-		// this block, repair what caused the error and try again. Hence, we return an
-		// error for now (the production code calling this function is expected to panic).
 		return nil, err
 	}
 
@@ -180,7 +173,8 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 		return nil, err
 	}
 
-	return state.MakeBlock(height, txl, commit, evidence, proposerAddr)
+	cRoot, cCols, cCoeffs, _ = ComputeCDAHeader(&block.Data.ODS)
+	return state.MakeBlock(height, txl, commit, evidence, proposerAddr, cRoot, cCols, cCoeffs)
 }
 
 func (blockExec *BlockExecutor) ProcessProposal(
@@ -368,6 +362,12 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	if err := blockExec.store.Save(state); err != nil {
 		return state, err
 	}
+
+	// Push committed block to Publisher Node
+	go func(b *types.Block) {
+		pusher := NewPublisherPusher("")
+		_ = pusher.PushCommittedBlock(b)
+	}(block)
 
 	fail.Fail() // XXX
 

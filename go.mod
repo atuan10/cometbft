@@ -2,13 +2,21 @@ module github.com/cometbft/cometbft
 
 go 1.25.0
 
+replace (
+	github.com/DataAvailabilityLayerNovel/rlnc-rsmt2d => ../rlnc-rsmt2d
+	google.golang.org/genproto => google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
+	google.golang.org/genproto/googleapis/rpc => google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
+)
+
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/DataAvailabilityLayerNovel/rlnc-rsmt2d v0.0.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/adlio/schema v1.4.0
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/cloudflare/circl v1.6.5
 	github.com/cometbft/cometbft-db v0.14.1
+	github.com/consensys/gnark-crypto v0.19.2
 	github.com/cosmos/gogoproto v1.7.2
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/fortytw2/leaktest v1.3.0
@@ -60,6 +68,8 @@ require (
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/bits-and-blooms/bitset v1.20.0 // indirect
+	github.com/celestiaorg/merkletree v0.0.0-20210714075610-a84dc3ddbbe4 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cockroachdb/errors v1.11.3 // indirect
@@ -103,6 +113,7 @@ require (
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/klauspost/reedsolomon v1.12.5 // indirect
 	github.com/koron/go-ssdp v0.0.6 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect

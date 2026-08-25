@@ -358,6 +358,11 @@ type Header struct {
 	// consensus info
 	EvidenceHash    cmtbytes.HexBytes `json:"evidence_hash"`    // evidence included in the block
 	ProposerAddress Address           `json:"proposer_address"` // original proposer of the block
+
+	// CDA Root of Trust fields
+	CommitsRoot cmtbytes.HexBytes `json:"commits_root"`
+	ColumnComm  [][]byte          `json:"column_comm"`
+	Coeffs      []byte            `json:"coeffs"`
 }
 
 // Populate the Header with state-derived data.
@@ -368,6 +373,7 @@ func (h *Header) Populate(
 	valHash, nextValHash []byte,
 	consensusHash, appHash, lastResultsHash []byte,
 	proposerAddress Address,
+	commitsRoot []byte, columnComm [][]byte, coeffs []byte,
 ) {
 	h.Version = version
 	h.ChainID = chainID
@@ -379,6 +385,9 @@ func (h *Header) Populate(
 	h.AppHash = appHash
 	h.LastResultsHash = lastResultsHash
 	h.ProposerAddress = proposerAddress
+	h.CommitsRoot = commitsRoot
+	h.ColumnComm = columnComm
+	h.Coeffs = coeffs
 }
 
 // ValidateBasic performs stateless validation on a Header returning an error
@@ -481,6 +490,9 @@ func (h *Header) Hash() cmtbytes.HexBytes {
 		cdcEncode(h.LastResultsHash),
 		cdcEncode(h.EvidenceHash),
 		cdcEncode(h.ProposerAddress),
+		cdcEncode(h.CommitsRoot),
+		cdcEncode(h.ColumnComm),
+		cdcEncode(h.Coeffs),
 	})
 }
 
@@ -544,6 +556,9 @@ func (h *Header) ToProto() *cmtproto.Header {
 		LastResultsHash:    h.LastResultsHash,
 		LastCommitHash:     h.LastCommitHash,
 		ProposerAddress:    h.ProposerAddress,
+		CommitsRoot:        h.CommitsRoot,
+		ColumnComm:         h.ColumnComm,
+		Coeffs:             h.Coeffs,
 	}
 }
 
@@ -575,6 +590,9 @@ func HeaderFromProto(ph *cmtproto.Header) (Header, error) {
 	h.LastResultsHash = ph.LastResultsHash
 	h.LastCommitHash = ph.LastCommitHash
 	h.ProposerAddress = ph.ProposerAddress
+	h.CommitsRoot = ph.CommitsRoot
+	h.ColumnComm = ph.ColumnComm
+	h.Coeffs = ph.Coeffs
 
 	return *h, h.ValidateBasic()
 }
@@ -1298,12 +1316,24 @@ func ExtendedCommitFromProto(ecp *cmtproto.ExtendedCommit) (*ExtendedCommit, err
 
 //-------------------------------------
 
-// Data contains the set of transactions included in the block
+// ODSData contains the raw K x K matrix cells of the Original Data Square (ODS).
+type ODSData struct {
+	K     int      `json:"k"`
+	Cells [][]byte `json:"cells"`
+}
+
+func (ods *ODSData) Hash() cmtbytes.HexBytes {
+	if ods == nil || len(ods.Cells) == 0 {
+		return nil
+	}
+	return merkle.HashFromByteSlices(ods.Cells)
+}
+
+// Data contains the set of transactions or ODS matrix included in the block
 type Data struct {
 	// Txs that will be applied by state @ block.Height+1.
-	// NOTE: not all txs here are valid.  We're just agreeing on the order first.
-	// This means that block.AppHash does not include these txs.
-	Txs Txs `json:"txs"`
+	Txs Txs     `json:"txs"`
+	ODS ODSData `json:"ods"`
 
 	// Volatile
 	hash cmtbytes.HexBytes
@@ -1315,7 +1345,11 @@ func (data *Data) Hash() cmtbytes.HexBytes {
 		return (Txs{}).Hash()
 	}
 	if data.hash == nil {
-		data.hash = data.Txs.Hash() // NOTE: leaves of merkle tree are TxIDs
+		if len(data.ODS.Cells) > 0 {
+			data.hash = data.ODS.Hash()
+		} else {
+			data.hash = data.Txs.Hash()
+		}
 	}
 	return data.hash
 }

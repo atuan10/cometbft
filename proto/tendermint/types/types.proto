@@ -71,6 +71,11 @@ message Header {
   // consensus info
   bytes evidence_hash = 13; // evidence included in the block
   bytes proposer_address = 14; // original proposer of the block
+
+  // CDA Root of Trust
+  bytes commits_root = 15;
+  repeated bytes column_comm = 16;
+  bytes coeffs = 17;
 }
 
 // Data contains the set of transactions included in the block

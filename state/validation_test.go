@@ -326,7 +326,7 @@ func TestValidateBlockEvidence(t *testing.T) {
 				evidence = append(evidence, newEv)
 				currentBytes += int64(len(newEv.Bytes()))
 			}
-			block, err := state.MakeBlock(height, test.MakeNTxs(height, 10), lastCommit, evidence, proposerAddr)
+			block, err := state.MakeBlock(height, test.MakeNTxs(height, 10), lastCommit, evidence, proposerAddr, nil, nil, nil)
 			require.NoError(t, err)
 
 			err = blockExec.ValidateBlock(state, block)

@@ -248,8 +248,11 @@ type Header struct {
 	AppHash            []byte `protobuf:"bytes,11,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
 	LastResultsHash    []byte `protobuf:"bytes,12,opt,name=last_results_hash,json=lastResultsHash,proto3" json:"last_results_hash,omitempty"`
 	// consensus info
-	EvidenceHash    []byte `protobuf:"bytes,13,opt,name=evidence_hash,json=evidenceHash,proto3" json:"evidence_hash,omitempty"`
-	ProposerAddress []byte `protobuf:"bytes,14,opt,name=proposer_address,json=proposerAddress,proto3" json:"proposer_address,omitempty"`
+	EvidenceHash    []byte   `protobuf:"bytes,13,opt,name=evidence_hash,json=evidenceHash,proto3" json:"evidence_hash,omitempty"`
+	ProposerAddress []byte   `protobuf:"bytes,14,opt,name=proposer_address,json=proposerAddress,proto3" json:"proposer_address,omitempty"`
+	CommitsRoot     []byte   `protobuf:"bytes,15,opt,name=commits_root,json=commitsRoot,proto3" json:"commits_root,omitempty"`
+	ColumnComm      [][]byte `protobuf:"bytes,16,rep,name=column_comm,json=columnComm,proto3" json:"column_comm,omitempty"`
+	Coeffs          []byte   `protobuf:"bytes,17,opt,name=coeffs,proto3" json:"coeffs,omitempty"`
 }
 
 func (m *Header) Reset()         { *m = Header{} }

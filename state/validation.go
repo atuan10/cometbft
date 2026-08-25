@@ -28,6 +28,11 @@ func validateBlock(state State, block *types.Block, opts ...func(*blockValidatio
 		return err
 	}
 
+	// Validate CDA Header and ODS data consistency.
+	if err := VerifyCDAHeader(block); err != nil {
+		return fmt.Errorf("invalid CDA header: %w", err)
+	}
+
 	// Validate basic info.
 	if block.Version.App != state.Version.Consensus.App ||
 		block.Version.Block != state.Version.Consensus.Block {

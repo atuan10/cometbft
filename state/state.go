@@ -236,6 +236,9 @@ func (state State) MakeBlock(
 	lastCommit *types.Commit,
 	evidence []types.Evidence,
 	proposerAddress []byte,
+	commitsRoot []byte,
+	columnComm [][]byte,
+	coeffs []byte,
 ) (*types.Block, error) {
 
 	// Build base block with block data.
@@ -260,6 +263,7 @@ func (state State) MakeBlock(
 		state.Validators.Hash(), state.NextValidators.Hash(),
 		state.ConsensusParams.Hash(), state.AppHash, state.LastResultsHash,
 		proposerAddress,
+		commitsRoot, columnComm, coeffs,
 	)
 
 	return block, nil
