@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -380,10 +381,12 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	}
 
 	// Push committed block to Publisher Node
-	go func(b *types.Block) {
-		pusher := NewPublisherPusher("")
-		_ = pusher.PushCommittedBlock(b)
-	}(block)
+	if os.Getenv("DISABLE_AUTO_PUBLISHER_PUSH") != "true" {
+		go func(b *types.Block) {
+			pusher := NewPublisherPusher("")
+			_ = pusher.PushCommittedBlock(b)
+		}(block)
+	}
 
 	fail.Fail() // XXX
 

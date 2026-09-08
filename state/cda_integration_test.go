@@ -125,7 +125,7 @@ func TestCDABlockProcessingAndPublishingLifecycle(t *testing.T) {
 	// 10. Verify Publisher Node received the published block with BFT Header commitments
 	select {
 	case req := <-publishedBlocks:
-		require.Equal(t, block.Hash().String(), req.BlockID)
+		require.Equal(t, fmt.Sprintf("block-%d", block.Height), req.BlockID)
 		require.Equal(t, k*k, len(req.Data))
 		t.Logf("[Publisher Node] RECEIVED BLOCK %s with %d ODS cells!", req.BlockID, len(req.Data))
 
@@ -243,42 +243,54 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 	defer publisherServer.Close()
 
 	// 2. Initialize 4-Validator Consensus State
-	state, stateDB, _ := makeState(4, 1)
+	state, stateDB, privVals := makeState(4, 1)
 	stateStore := sm.NewStore(stateDB, sm.StoreOptions{DiscardABCIResponses: false})
 	blockStore := store.NewBlockStore(dbm.NewMemDB())
 	proposerAddr := state.Validators.GetProposer().Address
 
-	// 3. Create realistic transaction batch (client submissions)
-	txCount := 16
-	txs := make([]types.Tx, txCount)
-	for i := 0; i < txCount; i++ {
-		txs[i] = types.Tx([]byte(fmt.Sprintf("user_tx_%04d_transfer_cda_tokens_payload_data_block1", i+1)))
+	pusherURL := publisherServer.URL + "/publish"
+	isLivePublisher := false
+	if envURL := os.Getenv("PUBLISHER_URL"); envURL != "" {
+		pusherURL = envURL
+		isLivePublisher = true
 	}
-	t.Logf("[Client] Submitted %d transactions to CometBFT mempool", txCount)
+	os.Setenv("DISABLE_AUTO_PUBLISHER_PUSH", "true")
+	defer os.Unsetenv("DISABLE_AUTO_PUBLISHER_PUSH")
+	pusher := sm.NewPublisherPusher(pusherURL)
 
-	// 4. Setup Mempool and ABCI ProxyApp
+	kVal := 32
+	if envK := os.Getenv("CDA_K"); envK != "" {
+		if parsedK, err := strconv.Atoi(envK); err == nil && parsedK > 0 {
+			kVal = parsedK
+		}
+	}
+	expectedCols := 2 * kVal
+	expectedCells := kVal * kVal
+
+	// Setup Mempool Mock
 	mp := &mpmocks.Mempool{}
 	mp.On("Lock").Return()
 	mp.On("Unlock").Return()
 	mp.On("FlushAppConn", mock.Anything).Return(nil)
 	mp.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	mp.On("ReapMaxBytesMaxGas", mock.Anything, mock.Anything).Return(types.Txs(txs))
 
+	// Setup ABCI Mock with dynamic returns based on requests
 	app := &abcimocks.Application{}
-	app.On("PrepareProposal", mock.Anything, mock.Anything).Return(&abci.ResponsePrepareProposal{
-		Txs: types.Txs(txs).ToSliceOfBytes(),
+	app.On("PrepareProposal", mock.Anything, mock.Anything).Return(func(_ context.Context, req *abci.RequestPrepareProposal) *abci.ResponsePrepareProposal {
+		return &abci.ResponsePrepareProposal{Txs: req.Txs}
 	}, nil)
 	app.On("ProcessProposal", mock.Anything, mock.Anything).Return(&abci.ResponseProcessProposal{
 		Status: abci.ResponseProcessProposal_ACCEPT,
 	}, nil)
-	txResults := make([]*abci.ExecTxResult, txCount)
-	for i := 0; i < txCount; i++ {
-		txResults[i] = &abci.ExecTxResult{Code: abci.CodeTypeOK}
-	}
-
-	app.On("FinalizeBlock", mock.Anything, mock.Anything).Return(&abci.ResponseFinalizeBlock{
-		AppHash:   []byte("app_hash_32bytes_tx_flow_valid1"),
-		TxResults: txResults,
+	app.On("FinalizeBlock", mock.Anything, mock.Anything).Return(func(_ context.Context, req *abci.RequestFinalizeBlock) *abci.ResponseFinalizeBlock {
+		txResults := make([]*abci.ExecTxResult, len(req.Txs))
+		for i := range txResults {
+			txResults[i] = &abci.ExecTxResult{Code: abci.CodeTypeOK}
+		}
+		return &abci.ResponseFinalizeBlock{
+			AppHash:   []byte(fmt.Sprintf("app_hash_height_%04d_valid_state", req.Height)),
+			TxResults: txResults,
+		}
 	}, nil)
 	app.On("Commit", mock.Anything, mock.Anything).Return(&abci.ResponseCommit{}, nil)
 
@@ -290,76 +302,112 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 
 	blockExec := sm.NewBlockExecutor(stateStore, log.TestingLogger(), proxyApp.Consensus(), mp, sm.EmptyEvidencePool{}, blockStore)
 
-	// 5. PROPOSER: Create Proposal Block from transactions
-	t.Logf("[Proposer %X] Generating proposal block height 1 from mempool txs...", proposerAddr)
-	lastExtCommit := &types.ExtendedCommit{Height: 0}
-	proposalBlock, err := blockExec.CreateProposalBlock(ctx, 1, state, lastExtCommit, proposerAddr)
-	require.NoError(t, err, "CreateProposalBlock failed")
+	totalBlocks := 3
+	t.Logf("=== Starting Multi-Block Complex Consensus E2E Pipeline (%d Consecutive Blocks) ===", totalBlocks)
 
-	// Verify Consensus Layer computed the CDA Header
-	kVal := 32
-	if envK := os.Getenv("CDA_K"); envK != "" {
-		if parsedK, err := strconv.Atoi(envK); err == nil && parsedK > 0 {
-			kVal = parsedK
+	var lastCommit *types.Commit = new(types.Commit)
+	for h := int64(1); h <= int64(totalBlocks); h++ {
+		t.Logf("\n---------------------- [BLOCK HEIGHT %d / %d] ----------------------", h, totalBlocks)
+
+		// 3. Create unique realistic transaction batch for this block height
+		txCount := 16
+		txs := make([]types.Tx, txCount)
+		for i := 0; i < txCount; i++ {
+			txs[i] = types.Tx([]byte(fmt.Sprintf("user_tx_h%d_idx%03d_cda_token_transfer_%d_bytes_payload", h, i+1, i*17)))
+		}
+		t.Logf("[Client] Submitted %d transactions to CometBFT mempool for block height %d", txCount, h)
+		mp.On("ReapMaxBytesMaxGas", mock.Anything, mock.Anything).Return(types.Txs(txs)).Once()
+
+		// 5. PROPOSER: Create Proposal Block from transactions
+		t.Logf("[Proposer %X] Generating proposal block height %d from mempool txs...", proposerAddr, h)
+		var lastExtCommit *types.ExtendedCommit
+		if h == 1 {
+			lastExtCommit = &types.ExtendedCommit{Height: 0}
+		} else {
+			var errCommit error
+			lastExtCommit, _, errCommit = makeValidCommit(state.LastBlockHeight, state.LastBlockID, state.Validators, privVals)
+			require.NoError(t, errCommit, "Failed to create valid commit for previous block")
+			stripSignatures(lastExtCommit)
+		}
+
+		proposalBlock, err := blockExec.CreateProposalBlock(ctx, h, state, lastExtCommit, proposerAddr)
+		require.NoError(t, err, "CreateProposalBlock failed for height %d", h)
+
+		require.NotEmpty(t, proposalBlock.Header.CommitsRoot, "Proposer must compute CommitsRoot")
+		require.Equal(t, expectedCols, len(proposalBlock.Header.ColumnComm), "Proposer must compute 2K KZG column commitments")
+		require.NotEmpty(t, proposalBlock.Header.Coeffs, "Proposer must compute RLNC coefficients")
+		require.Equal(t, expectedCells, len(proposalBlock.Data.ODS.Cells), "Proposer must populate KxK ODS matrix cells")
+		t.Logf("[Consensus Layer: Proposer] ✅ COMPUTED CDA Header (Height %d): CommitsRoot=%X, ColumnComm=%d, CoeffsLen=%d, ODSCells=%d",
+			h, proposalBlock.Header.CommitsRoot, len(proposalBlock.Header.ColumnComm), len(proposalBlock.Header.Coeffs), len(proposalBlock.Data.ODS.Cells))
+
+		// 6. VALIDATOR: ValidateBlock verifies the CDA Header against the transaction ODS data
+		t.Logf("[Consensus Layer: Validator] Verifying proposed block height %d...", h)
+		err = blockExec.ValidateBlock(state, proposalBlock)
+		require.NoError(t, err, "Consensus Validator should successfully verify valid proposal block")
+		t.Logf("[Consensus Layer: Validator] ✅ SUCCESS: Verified CDA Header and transaction ODS data consistency (Height %d)!", h)
+
+		// 7. TAMPER TEST (at height 1): Ensure Validator rejects block if an attacker tampers with CommitsRoot
+		if h == 1 {
+			tamperedBlock := *proposalBlock
+			tamperedBlock.Header.CommitsRoot = []byte("malicious_tampered_commits_root_")
+			errTamper := sm.VerifyCDAHeader(&tamperedBlock)
+			require.Error(t, errTamper, "Consensus Validator must reject block with tampered CDA Header")
+			require.Contains(t, errTamper.Error(), "mismatched CommitsRoot", "Error message must indicate CommitsRoot mismatch")
+			t.Logf("[Consensus Layer: Validator] ✅ SUCCESS: Correctly REJECTED tampered block proposal with error: %v", errTamper)
+		}
+
+		// 8. CONSENSUS COMMIT & APPLY BLOCK
+		t.Logf("[Consensus Layer] Committing block height %d after +2/3 Precommits...", h)
+		partSet, err := proposalBlock.MakePartSet(types.BlockPartSizeBytes)
+		require.NoError(t, err)
+		blockID := types.BlockID{Hash: proposalBlock.Hash(), PartSetHeader: partSet.Header()}
+		newState, err := blockExec.ApplyBlock(state, blockID, proposalBlock)
+		require.NoError(t, err, "Failed to apply block in consensus at height %d", h)
+		require.Equal(t, h, newState.LastBlockHeight)
+		state = newState
+		lastCommit = lastExtCommit.ToCommit()
+		_ = lastCommit
+		t.Logf("[Consensus Layer] ✅ Block height %d committed successfully! State updated.", h)
+
+		// 9. PUBLISHER PUSH: Push committed block to Publisher Node
+		err = pusher.PushCommittedBlock(proposalBlock)
+		require.NoError(t, err, "Failed to push committed block to publisher")
+
+		if !isLivePublisher {
+			select {
+			case req := <-publishedBlocks:
+				require.Equal(t, fmt.Sprintf("block-%d", proposalBlock.Height), req.BlockID)
+				require.Equal(t, expectedCells, len(req.Data))
+				require.NotNil(t, req.Header)
+				require.True(t, strings.EqualFold(proposalBlock.Header.CommitsRoot.String(), req.Header.CommitsRoot))
+				require.Equal(t, expectedCols, len(req.Header.ColumnComm))
+				t.Logf("[Publisher Bridge] ✅ SUCCESS: Mock Publisher received committed block %s (height %d) with verified BFT Header!",
+					req.BlockID, h)
+			case <-time.After(3 * time.Second):
+				t.Fatalf("Timed out waiting for block %d to be pushed to Publisher", h)
+			}
+		} else {
+			t.Logf("[Publisher Bridge] ✅ SUCCESS: Pushed committed block %s (height %d) directly to live Publisher Node!",
+				proposalBlock.Hash().String(), h)
+
+			// 10. ADVERSARIAL LIVE INJECTION TEST (after block 1):
+			// Send an illegitimate tampered block directly to the live Publisher to ensure it enforces BFT Header verification
+			if h == 1 {
+				tamperedPushBlock := *proposalBlock
+				tamperedPushBlock.Header.Height = h
+				tamperedPushBlock.Header.CommitsRoot = []byte("tampered_live_publisher_root_32")
+				t.Logf("[Adversarial Test] Injecting tampered block to live Publisher (expecting HTTP 422 rejection)...")
+				errTampered := pusher.PushCommittedBlock(&tamperedPushBlock)
+				require.Error(t, errTampered, "Live Publisher MUST reject block with tampered CDA Header")
+				require.Contains(t, errTampered.Error(), "422", "Live Publisher MUST return HTTP 422 Unprocessable Entity")
+				t.Logf("[Adversarial Test] ✅ Live Publisher correctly REJECTED tampered block with HTTP 422 Unprocessable Entity!")
+			}
+
+			// Pause between blocks for downstream distribution & DAS
+			time.Sleep(6 * time.Second)
 		}
 	}
-	expectedCols := 2 * kVal
-	expectedCells := kVal * kVal
 
-	require.NotEmpty(t, proposalBlock.Header.CommitsRoot, "Proposer must compute CommitsRoot")
-	require.Equal(t, expectedCols, len(proposalBlock.Header.ColumnComm), "Proposer must compute 2K KZG column commitments")
-	require.NotEmpty(t, proposalBlock.Header.Coeffs, "Proposer must compute RLNC coefficients")
-	require.Equal(t, expectedCells, len(proposalBlock.Data.ODS.Cells), "Proposer must populate KxK ODS matrix cells")
-	t.Logf("[Consensus Layer: Proposer] ✅ COMPUTED CDA Header from txs: CommitsRoot=%X, ColumnComm=%d, CoeffsLen=%d, ODSCells=%d",
-		proposalBlock.Header.CommitsRoot, len(proposalBlock.Header.ColumnComm), len(proposalBlock.Header.Coeffs), len(proposalBlock.Data.ODS.Cells))
-
-	// 6. VALIDATOR: ValidateBlock verifies the CDA Header against the transaction ODS data
-	t.Logf("[Consensus Layer: Validator] Verifying proposed block height 1...")
-	err = blockExec.ValidateBlock(state, proposalBlock)
-	require.NoError(t, err, "Consensus Validator should successfully verify valid proposal block")
-	t.Logf("[Consensus Layer: Validator] ✅ SUCCESS: Verified CDA Header and transaction ODS data consistency!")
-
-	// 7. TAMPER TEST: Ensure Validator rejects block if an attacker tampers with CommitsRoot
-	tamperedBlock := *proposalBlock
-	tamperedBlock.Header.CommitsRoot = []byte("malicious_tampered_commits_root_")
-	err = sm.VerifyCDAHeader(&tamperedBlock)
-	require.Error(t, err, "Consensus Validator must reject block with tampered CDA Header")
-	require.Contains(t, err.Error(), "mismatched CommitsRoot", "Error message must indicate CommitsRoot mismatch")
-	t.Logf("[Consensus Layer: Validator] ✅ SUCCESS: Correctly REJECTED tampered block proposal with error: %v", err)
-
-	// 8. CONSENSUS COMMIT & PUBLISHER PUSH: Apply committed block
-	t.Logf("[Consensus Layer] Committing block height 1 after +2/3 Precommits...")
-	newState, err := blockExec.ApplyBlock(state, types.BlockID{Hash: proposalBlock.Hash()}, proposalBlock)
-	require.NoError(t, err, "Failed to apply block in consensus")
-	require.Equal(t, int64(1), newState.LastBlockHeight)
-	t.Logf("[Consensus Layer] ✅ Block height 1 committed successfully!")
-
-	// 9. Check Publisher receives the committed block with BFT Header commitments
-	pusherURL := publisherServer.URL + "/publish"
-	isLivePublisher := false
-	if envURL := os.Getenv("PUBLISHER_URL"); envURL != "" {
-		pusherURL = envURL
-		isLivePublisher = true
-	}
-	pusher := sm.NewPublisherPusher(pusherURL)
-	err = pusher.PushCommittedBlock(proposalBlock)
-	require.NoError(t, err, "Failed to push committed block to publisher")
-
-	if !isLivePublisher {
-		select {
-		case req := <-publishedBlocks:
-			require.Equal(t, proposalBlock.Hash().String(), req.BlockID)
-			require.Equal(t, expectedCells, len(req.Data))
-			require.NotNil(t, req.Header)
-			require.True(t, strings.EqualFold(proposalBlock.Header.CommitsRoot.String(), req.Header.CommitsRoot))
-			require.Equal(t, expectedCols, len(req.Header.ColumnComm))
-			t.Logf("[Publisher Bridge] ✅ SUCCESS: Publisher received committed block %s with verified BFT Header (CommitsRoot=%s, ColumnComm=%d)!",
-				req.BlockID, req.Header.CommitsRoot, len(req.Header.ColumnComm))
-		case <-time.After(3 * time.Second):
-			t.Fatalf("Timed out waiting for block to be pushed to Publisher")
-		}
-	} else {
-		t.Logf("[Publisher Bridge] ✅ SUCCESS: Pushed committed block %s directly to live Publisher Node at %s!", proposalBlock.Hash().String(), pusherURL)
-	}
+	t.Logf("\n🎉 SUCCESS: All %d sequential blocks processed, computed, verified, and committed by Consensus Layer!", totalBlocks)
 }
 

@@ -21,6 +21,7 @@ type HeaderPayload struct {
 
 type PublishRequest struct {
 	BlockID   string         `json:"block_id"`
+	Height    int64          `json:"height,omitempty"`
 	Data      []string       `json:"data"`
 	Header    *HeaderPayload `json:"header,omitempty"`
 	Signature string         `json:"signature,omitempty"`
@@ -41,7 +42,7 @@ func NewPublisherPusher(url string) *PublisherPusher {
 	}
 	return &PublisherPusher{
 		publisherURL: url,
-		client:       &http.Client{Timeout: 10 * time.Second},
+		client:       &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -51,7 +52,10 @@ func (p *PublisherPusher) PushCommittedBlock(block *types.Block) error {
 		return nil
 	}
 
-	blockID := block.Header.Hash().String()
+	blockID := fmt.Sprintf("block-%d", block.Height)
+	if block.Height <= 0 {
+		blockID = "block-0-" + block.Header.Hash().String()
+	}
 	dataHex := make([]string, len(block.Data.ODS.Cells))
 	for i, cell := range block.Data.ODS.Cells {
 		if len(cell) == 128 {
@@ -76,6 +80,7 @@ func (p *PublisherPusher) PushCommittedBlock(block *types.Block) error {
 
 	reqPayload := PublishRequest{
 		BlockID: blockID,
+		Height:  block.Height,
 		Data:    dataHex,
 		Header:  headerPayload,
 	}
