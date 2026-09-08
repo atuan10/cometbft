@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -296,10 +297,19 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 	require.NoError(t, err, "CreateProposalBlock failed")
 
 	// Verify Consensus Layer computed the CDA Header
+	kVal := 32
+	if envK := os.Getenv("CDA_K"); envK != "" {
+		if parsedK, err := strconv.Atoi(envK); err == nil && parsedK > 0 {
+			kVal = parsedK
+		}
+	}
+	expectedCols := 2 * kVal
+	expectedCells := kVal * kVal
+
 	require.NotEmpty(t, proposalBlock.Header.CommitsRoot, "Proposer must compute CommitsRoot")
-	require.Equal(t, 64, len(proposalBlock.Header.ColumnComm), "Proposer must compute 64 KZG column commitments (2K)")
+	require.Equal(t, expectedCols, len(proposalBlock.Header.ColumnComm), "Proposer must compute 2K KZG column commitments")
 	require.NotEmpty(t, proposalBlock.Header.Coeffs, "Proposer must compute RLNC coefficients")
-	require.Equal(t, 1024, len(proposalBlock.Data.ODS.Cells), "Proposer must populate 32x32 ODS matrix cells")
+	require.Equal(t, expectedCells, len(proposalBlock.Data.ODS.Cells), "Proposer must populate KxK ODS matrix cells")
 	t.Logf("[Consensus Layer: Proposer] ✅ COMPUTED CDA Header from txs: CommitsRoot=%X, ColumnComm=%d, CoeffsLen=%d, ODSCells=%d",
 		proposalBlock.Header.CommitsRoot, len(proposalBlock.Header.ColumnComm), len(proposalBlock.Header.Coeffs), len(proposalBlock.Data.ODS.Cells))
 
@@ -339,10 +349,10 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 		select {
 		case req := <-publishedBlocks:
 			require.Equal(t, proposalBlock.Hash().String(), req.BlockID)
-			require.Equal(t, 1024, len(req.Data))
+			require.Equal(t, expectedCells, len(req.Data))
 			require.NotNil(t, req.Header)
 			require.True(t, strings.EqualFold(proposalBlock.Header.CommitsRoot.String(), req.Header.CommitsRoot))
-			require.Equal(t, 64, len(req.Header.ColumnComm))
+			require.Equal(t, expectedCols, len(req.Header.ColumnComm))
 			t.Logf("[Publisher Bridge] ✅ SUCCESS: Publisher received committed block %s with verified BFT Header (CommitsRoot=%s, ColumnComm=%d)!",
 				req.BlockID, req.Header.CommitsRoot, len(req.Header.ColumnComm))
 		case <-time.After(3 * time.Second):

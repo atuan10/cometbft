@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"os"
+	"strconv"
 	"sync"
 
 	"github.com/DataAvailabilityLayerNovel/rlnc-rsmt2d/cda"
@@ -12,6 +14,15 @@ import (
 
 	"github.com/cometbft/cometbft/types"
 )
+
+func getCDAKVal() int {
+	if envK := os.Getenv("CDA_K"); envK != "" {
+		if parsedK, err := strconv.Atoi(envK); err == nil && parsedK > 0 {
+			return parsedK
+		}
+	}
+	return 32
+}
 
 var (
 	cdaOnce sync.Once
@@ -161,7 +172,7 @@ func VerifyCDAHeader(block *types.Block) error {
 
 	// If block ODS data is empty but block has transactions, construct ODS from Txs
 	if len(block.Data.ODS.Cells) == 0 && len(block.Data.Txs) > 0 {
-		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, 32)
+		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, getCDAKVal())
 	}
 
 	// If block still does not contain ODS data, skip CDA verification

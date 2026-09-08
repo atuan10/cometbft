@@ -175,7 +175,7 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 
 	odsData := block.Data.ODS
 	if len(odsData.Cells) == 0 && len(txl) > 0 {
-		odsData = BuildODSFromTxs(txl, 32)
+		odsData = BuildODSFromTxs(txl, getCDAKVal())
 	}
 
 	cRoot, cCols, cCoeffs, _ = ComputeCDAHeader(&odsData)
@@ -376,7 +376,7 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 
 	// Ensure ODS is populated before pushing to Publisher
 	if len(block.Data.ODS.Cells) == 0 && len(block.Data.Txs) > 0 {
-		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, 32)
+		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, getCDAKVal())
 	}
 
 	// Push committed block to Publisher Node
