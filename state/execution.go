@@ -173,8 +173,19 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 		return nil, err
 	}
 
-	cRoot, cCols, cCoeffs, _ = ComputeCDAHeader(&block.Data.ODS)
-	return state.MakeBlock(height, txl, commit, evidence, proposerAddr, cRoot, cCols, cCoeffs)
+	odsData := block.Data.ODS
+	if len(odsData.Cells) == 0 && len(txl) > 0 {
+		odsData = BuildODSFromTxs(txl, 32)
+	}
+
+	cRoot, cCols, cCoeffs, _ = ComputeCDAHeader(&odsData)
+	pBlock, err := state.MakeBlock(height, txl, commit, evidence, proposerAddr, cRoot, cCols, cCoeffs)
+	if err != nil {
+		return nil, err
+	}
+	pBlock.Data.ODS = odsData
+	pBlock.DataHash = pBlock.Data.Hash()
+	return pBlock, nil
 }
 
 func (blockExec *BlockExecutor) ProcessProposal(
@@ -361,6 +372,11 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	state.AppHash = abciResponse.AppHash
 	if err := blockExec.store.Save(state); err != nil {
 		return state, err
+	}
+
+	// Ensure ODS is populated before pushing to Publisher
+	if len(block.Data.ODS.Cells) == 0 && len(block.Data.Txs) > 0 {
+		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, 32)
 	}
 
 	// Push committed block to Publisher Node

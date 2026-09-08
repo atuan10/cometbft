@@ -94,13 +94,77 @@ func ComputeCDAHeader(ods *types.ODSData) (commitsRoot []byte, columnComm [][]by
 	return root, columnComm, coeffBytes, nil
 }
 
+// BuildODSFromTxs constructs a K x K Original Data Square from transaction payloads.
+func BuildODSFromTxs(txs types.Txs, k int) types.ODSData {
+	if len(txs) == 0 {
+		return types.ODSData{}
+	}
+	if k <= 0 {
+		k = 32
+	}
+	targetCells := k * k
+	cellSize := 64
+	cells := make([][]byte, 0, targetCells)
+
+	for _, tx := range txs {
+		txBytes := []byte(tx)
+		// If tx is hex-encoded 128 chars, decode it directly
+		if len(txBytes) == 128 {
+			if decoded, err := hex.DecodeString(string(txBytes)); err == nil && len(decoded) == cellSize {
+				cells = append(cells, decoded)
+				if len(cells) >= targetCells {
+					break
+				}
+				continue
+			}
+		}
+		// Otherwise chunk into 64-byte slices
+		for len(txBytes) > 0 {
+			chunkLen := cellSize
+			if len(txBytes) < chunkLen {
+				chunkLen = len(txBytes)
+			}
+			cell := make([]byte, cellSize)
+			copy(cell, txBytes[:chunkLen])
+			cells = append(cells, cell)
+			txBytes = txBytes[chunkLen:]
+			if len(cells) >= targetCells {
+				break
+			}
+		}
+		if len(cells) >= targetCells {
+			break
+		}
+	}
+
+	// Pad remaining cells up to targetCells
+	for i := len(cells); i < targetCells; i++ {
+		cell := make([]byte, cellSize)
+		cell[0] = byte(i >> 24)
+		cell[1] = byte(i >> 16)
+		cell[2] = byte(i >> 8)
+		cell[3] = byte(i)
+		cells = append(cells, cell)
+	}
+
+	return types.ODSData{
+		K:     k,
+		Cells: cells,
+	}
+}
+
 // VerifyCDAHeader validates that the Header CDA fields match the block ODS data.
 func VerifyCDAHeader(block *types.Block) error {
 	if block == nil {
 		return fmt.Errorf("nil block")
 	}
 
-	// If block does not contain ODS data, skip CDA verification
+	// If block ODS data is empty but block has transactions, construct ODS from Txs
+	if len(block.Data.ODS.Cells) == 0 && len(block.Data.Txs) > 0 {
+		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, 32)
+	}
+
+	// If block still does not contain ODS data, skip CDA verification
 	if len(block.Data.ODS.Cells) == 0 {
 		return nil
 	}
