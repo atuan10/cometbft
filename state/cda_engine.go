@@ -24,6 +24,15 @@ func getCDAKVal() int {
 	return 32
 }
 
+func getCDAKPieceVal() int {
+	if envKPiece := os.Getenv("CDA_K_PIECE"); envKPiece != "" {
+		if parsedKPiece, err := strconv.Atoi(envKPiece); err == nil && parsedKPiece > 0 {
+			return parsedKPiece
+		}
+	}
+	return getCDAKVal()
+}
+
 var (
 	cdaOnce sync.Once
 	cdaKZG  *cda.GnarkKZG
@@ -79,7 +88,8 @@ func ComputeCDAHeader(ods *types.ODSData) (commitsRoot []byte, columnComm [][]by
 	}
 
 	// 2. Compute Kate Column Commitments
-	codec := rlnc.NewRLNCCodec(k)
+	kPiece := getCDAKPieceVal()
+	codec := rlnc.NewRLNCCodec(kPiece)
 	pubData, err := cda.ComputeAndSetKateCommitments(codec, &eds, kzg, 0)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to compute Kate commitments: %w", err)

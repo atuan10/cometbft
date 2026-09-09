@@ -303,6 +303,11 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 	blockExec := sm.NewBlockExecutor(stateStore, log.TestingLogger(), proxyApp.Consensus(), mp, sm.EmptyEvidencePool{}, blockStore)
 
 	totalBlocks := 3
+	if envBlocks := os.Getenv("CDA_BLOCKS"); envBlocks != "" {
+		if parsedBlocks, err := strconv.Atoi(envBlocks); err == nil && parsedBlocks > 0 {
+			totalBlocks = parsedBlocks
+		}
+	}
 	t.Logf("=== Starting Multi-Block Complex Consensus E2E Pipeline (%d Consecutive Blocks) ===", totalBlocks)
 
 	var lastCommit *types.Commit = new(types.Commit)
@@ -311,6 +316,11 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 
 		// 3. Create unique realistic transaction batch for this block height
 		txCount := 16
+		if envTxs := os.Getenv("CDA_TXS_PER_BLOCK"); envTxs != "" {
+			if parsedTxs, err := strconv.Atoi(envTxs); err == nil && parsedTxs > 0 {
+				txCount = parsedTxs
+			}
+		}
 		txs := make([]types.Tx, txCount)
 		for i := 0; i < txCount; i++ {
 			txs[i] = types.Tx([]byte(fmt.Sprintf("user_tx_h%d_idx%03d_cda_token_transfer_%d_bytes_payload", h, i+1, i*17)))

@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cometbft/cometbft/types"
@@ -98,8 +100,10 @@ func (p *PublisherPusher) PushCommittedBlock(block *types.Block) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		log.Printf("[PublisherPusher] Publisher returned status %d for block %s", resp.StatusCode, blockID)
-		return fmt.Errorf("publisher returned status %d for block %s", resp.StatusCode, blockID)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		errMsg := strings.TrimSpace(string(bodyBytes))
+		log.Printf("[PublisherPusher] Publisher returned status %d for block %s: %s", resp.StatusCode, blockID, errMsg)
+		return fmt.Errorf("publisher returned status %d for block %s: %s", resp.StatusCode, blockID, errMsg)
 	}
 
 	log.Printf("[PublisherPusher] Successfully published block %s (height %d) to Publisher Node", blockID, block.Height)
