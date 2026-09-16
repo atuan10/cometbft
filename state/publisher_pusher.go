@@ -42,9 +42,15 @@ func NewPublisherPusher(url string) *PublisherPusher {
 			url = "http://localhost:8080/publish"
 		}
 	}
+	timeout := 180 * time.Second
+	if envTimeout := os.Getenv("PUBLISHER_TIMEOUT"); envTimeout != "" {
+		if d, err := time.ParseDuration(envTimeout); err == nil && d > 0 {
+			timeout = d
+		}
+	}
 	return &PublisherPusher{
 		publisherURL: url,
-		client:       &http.Client{Timeout: 60 * time.Second},
+		client:       &http.Client{Timeout: timeout},
 	}
 }
 
