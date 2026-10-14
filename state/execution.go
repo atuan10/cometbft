@@ -177,7 +177,7 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 
 	odsData := block.Data.ODS
 	if len(odsData.Cells) == 0 {
-		optimalK := cda.ComputeOptimalODSK(CountCellsFromTxs(txl), cda.DefaultMinODSK, getCDAKVal())
+		optimalK := cda.ComputeOptimalODSK(CountCellsFromTxs(txl), cda.DefaultMinODSK, getCDAMaxKVal())
 		odsData = BuildODSFromTxs(txl, optimalK)
 	}
 

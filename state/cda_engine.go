@@ -24,6 +24,23 @@ func getCDAKVal() int {
 	return 32
 }
 
+func getCDAMaxKVal() int {
+	if envMaxK := os.Getenv("CDA_MAX_K"); envMaxK != "" {
+		if parsedMaxK, err := strconv.Atoi(envMaxK); err == nil && parsedMaxK > 0 {
+			return parsedMaxK
+		}
+	}
+	if envK := os.Getenv("CDA_K"); envK != "" {
+		if parsedK, err := strconv.Atoi(envK); err == nil && parsedK > 0 {
+			if parsedK > 64 {
+				return parsedK
+			}
+			return 64
+		}
+	}
+	return cda.DefaultMaxODSK
+}
+
 func getCDAKPieceVal() int {
 	if envKPiece := os.Getenv("CDA_K_PIECE"); envKPiece != "" {
 		if parsedKPiece, err := strconv.Atoi(envKPiece); err == nil && parsedKPiece > 0 {
@@ -140,7 +157,7 @@ func CountCellsFromTxs(txs types.Txs) int {
 // If k <= 0, K is automatically chosen using cda.ComputeOptimalODSK.
 func BuildODSFromTxs(txs types.Txs, k int) types.ODSData {
 	if k <= 0 {
-		k = cda.ComputeOptimalODSK(CountCellsFromTxs(txs), cda.DefaultMinODSK, getCDAKVal())
+		k = cda.ComputeOptimalODSK(CountCellsFromTxs(txs), cda.DefaultMinODSK, getCDAMaxKVal())
 	}
 	targetCells := k * k
 	cellSize := 64
