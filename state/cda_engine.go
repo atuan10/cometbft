@@ -50,6 +50,15 @@ func getCDAKPieceVal() int {
 	return 4
 }
 
+func getCDACellSizeVal() int {
+	if envCellSize := os.Getenv("CDA_CELL_SIZE"); envCellSize != "" {
+		if parsedSize, err := strconv.Atoi(envCellSize); err == nil && parsedSize > 0 {
+			return parsedSize
+		}
+	}
+	return 512
+}
+
 var (
 	cdaOnce sync.Once
 	cdaKZG  *cda.GnarkKZG
@@ -85,17 +94,23 @@ func ComputeCDAHeader(ods *types.ODSData) (commitsRoot []byte, columnComm [][]by
 		k = 32 // default ODS dimension if not specified
 	}
 
-	// Ensure cells are []byte format
+	// Ensure cells are []byte format and match cell size
+	cellSize := getCDACellSizeVal()
 	odsBytes := make([][]byte, len(ods.Cells))
 	for i, cell := range ods.Cells {
-		if len(cell) == 128 { // Hex encoded cell string
+		if len(cell) == 128 || len(cell) == 2*cellSize { // Hex encoded cell string
 			decoded, err := hex.DecodeString(string(cell))
 			if err == nil {
-				odsBytes[i] = decoded
-				continue
+				cell = decoded
 			}
 		}
-		odsBytes[i] = append([]byte(nil), cell...)
+		if len(cell) < cellSize {
+			padded := make([]byte, cellSize)
+			copy(padded, cell)
+			odsBytes[i] = padded
+		} else {
+			odsBytes[i] = append([]byte(nil), cell...)
+		}
 	}
 
 	// 1. Compute Extended Data Square (EDS) using RS Leopard codec
@@ -132,13 +147,14 @@ func ComputeCDAHeader(ods *types.ODSData) (commitsRoot []byte, columnComm [][]by
 	return root, columnComm, coeffBytes, nil
 }
 
-// CountCellsFromTxs counts the number of 64-byte cells required to store txs.
+// CountCellsFromTxs counts the number of cells required to store txs using configured cell size.
 func CountCellsFromTxs(txs types.Txs) int {
-	cellSize := 64
+	cellSize := getCDACellSizeVal()
 	count := 0
+	hexLen := cellSize * 2
 	for _, tx := range txs {
 		txBytes := []byte(tx)
-		if len(txBytes) == 128 {
+		if len(txBytes) == hexLen || len(txBytes) == 128 {
 			if _, err := hex.DecodeString(string(txBytes)); err == nil {
 				count++
 				continue
@@ -160,22 +176,33 @@ func BuildODSFromTxs(txs types.Txs, k int) types.ODSData {
 		k = cda.ComputeOptimalODSK(CountCellsFromTxs(txs), cda.DefaultMinODSK, getCDAMaxKVal())
 	}
 	targetCells := k * k
-	cellSize := 64
+	cellSize := getCDACellSizeVal()
 	cells := make([][]byte, 0, targetCells)
+	hexLen := cellSize * 2
 
 	for _, tx := range txs {
 		txBytes := []byte(tx)
-		// If tx is hex-encoded 128 chars, decode it directly
-		if len(txBytes) == 128 {
-			if decoded, err := hex.DecodeString(string(txBytes)); err == nil && len(decoded) == cellSize {
-				cells = append(cells, decoded)
-				if len(cells) >= targetCells {
-					break
+		// If tx is hex-encoded matching cell size (or legacy 128 chars), decode it directly
+		if len(txBytes) == hexLen || len(txBytes) == 128 {
+			if decoded, err := hex.DecodeString(string(txBytes)); err == nil {
+				if len(decoded) == cellSize {
+					cells = append(cells, decoded)
+					if len(cells) >= targetCells {
+						break
+					}
+					continue
+				} else if len(decoded) < cellSize {
+					padded := make([]byte, cellSize)
+					copy(padded, decoded)
+					cells = append(cells, padded)
+					if len(cells) >= targetCells {
+						break
+					}
+					continue
 				}
-				continue
 			}
 		}
-		// Otherwise chunk into 64-byte slices
+		// Otherwise chunk into cellSize slices
 		for len(txBytes) > 0 {
 			chunkLen := cellSize
 			if len(txBytes) < chunkLen {
