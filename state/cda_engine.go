@@ -30,7 +30,7 @@ func getCDAKPieceVal() int {
 			return parsedKPiece
 		}
 	}
-	return getCDAKVal()
+	return 4
 }
 
 var (
@@ -115,13 +115,32 @@ func ComputeCDAHeader(ods *types.ODSData) (commitsRoot []byte, columnComm [][]by
 	return root, columnComm, coeffBytes, nil
 }
 
-// BuildODSFromTxs constructs a K x K Original Data Square from transaction payloads.
-func BuildODSFromTxs(txs types.Txs, k int) types.ODSData {
-	if len(txs) == 0 {
-		return types.ODSData{}
+// CountCellsFromTxs counts the number of 64-byte cells required to store txs.
+func CountCellsFromTxs(txs types.Txs) int {
+	cellSize := 64
+	count := 0
+	for _, tx := range txs {
+		txBytes := []byte(tx)
+		if len(txBytes) == 128 {
+			if _, err := hex.DecodeString(string(txBytes)); err == nil {
+				count++
+				continue
+			}
+		}
+		chunks := (len(txBytes) + cellSize - 1) / cellSize
+		if chunks <= 0 {
+			chunks = 1
+		}
+		count += chunks
 	}
+	return count
+}
+
+// BuildODSFromTxs constructs a K x K Original Data Square from transaction payloads.
+// If k <= 0, K is automatically chosen using cda.ComputeOptimalODSK.
+func BuildODSFromTxs(txs types.Txs, k int) types.ODSData {
 	if k <= 0 {
-		k = 32
+		k = cda.ComputeOptimalODSK(CountCellsFromTxs(txs), cda.DefaultMinODSK, getCDAKVal())
 	}
 	targetCells := k * k
 	cellSize := 64
@@ -182,11 +201,16 @@ func VerifyCDAHeader(block *types.Block) error {
 
 	// If block ODS data is empty but block has transactions, construct ODS from Txs
 	if len(block.Data.ODS.Cells) == 0 && len(block.Data.Txs) > 0 {
-		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, getCDAKVal())
+		block.Data.ODS = BuildODSFromTxs(block.Data.Txs, 0)
 	}
 
 	// If block still does not contain ODS data, skip CDA verification
 	if len(block.Data.ODS.Cells) == 0 {
+		return nil
+	}
+
+	// If block Header has no CDA commitments, skip CDA verification
+	if len(block.Header.CommitsRoot) == 0 && len(block.Header.ColumnComm) == 0 {
 		return nil
 	}
 

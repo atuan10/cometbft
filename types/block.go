@@ -1345,11 +1345,7 @@ func (data *Data) Hash() cmtbytes.HexBytes {
 		return (Txs{}).Hash()
 	}
 	if data.hash == nil {
-		if len(data.ODS.Cells) > 0 {
-			data.hash = data.ODS.Hash()
-		} else {
-			data.hash = data.Txs.Hash()
-		}
+		data.hash = data.Txs.Hash()
 	}
 	return data.hash
 }

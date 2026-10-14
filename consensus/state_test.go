@@ -2568,6 +2568,7 @@ func TestProposalBlockPartsHeightConsistency(t *testing.T) {
 		&types.Commit{},
 		nil,
 		cs.privValidatorPubKey.Address(),
+		nil, nil, nil,
 	)
 	require.NoError(t, err)
 
@@ -2716,6 +2717,7 @@ func findBlockSizeLimit(t *testing.T, height, maxBytes int64, cs *State, partSiz
 			&types.Commit{},
 			nil,
 			cs.privValidatorPubKey.Address(),
+			nil, nil, nil,
 		)
 		require.NoError(t, err)
 

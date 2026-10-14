@@ -264,8 +264,7 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 			kVal = parsedK
 		}
 	}
-	expectedCols := 2 * kVal
-	expectedCells := kVal * kVal
+	_ = kVal
 
 	// Setup Mempool Mock
 	mp := &mpmocks.Mempool{}
@@ -344,11 +343,12 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 		require.NoError(t, err, "CreateProposalBlock failed for height %d", h)
 
 		require.NotEmpty(t, proposalBlock.Header.CommitsRoot, "Proposer must compute CommitsRoot")
-		require.Equal(t, expectedCols, len(proposalBlock.Header.ColumnComm), "Proposer must compute 2K KZG column commitments")
+		expectedK := proposalBlock.Data.ODS.K
+		require.Equal(t, 2*expectedK, len(proposalBlock.Header.ColumnComm), "Proposer must compute 2K KZG column commitments")
 		require.NotEmpty(t, proposalBlock.Header.Coeffs, "Proposer must compute RLNC coefficients")
-		require.Equal(t, expectedCells, len(proposalBlock.Data.ODS.Cells), "Proposer must populate KxK ODS matrix cells")
-		t.Logf("[Consensus Layer: Proposer] ✅ COMPUTED CDA Header (Height %d): CommitsRoot=%X, ColumnComm=%d, CoeffsLen=%d, ODSCells=%d",
-			h, proposalBlock.Header.CommitsRoot, len(proposalBlock.Header.ColumnComm), len(proposalBlock.Header.Coeffs), len(proposalBlock.Data.ODS.Cells))
+		require.Equal(t, expectedK*expectedK, len(proposalBlock.Data.ODS.Cells), "Proposer must populate KxK ODS matrix cells")
+		t.Logf("[Consensus Layer: Proposer] ✅ COMPUTED CDA Header (Height %d, K=%d): CommitsRoot=%X, ColumnComm=%d, CoeffsLen=%d, ODSCells=%d",
+			h, expectedK, proposalBlock.Header.CommitsRoot, len(proposalBlock.Header.ColumnComm), len(proposalBlock.Header.Coeffs), len(proposalBlock.Data.ODS.Cells))
 
 		// 6. VALIDATOR: ValidateBlock verifies the CDA Header against the transaction ODS data
 		t.Logf("[Consensus Layer: Validator] Verifying proposed block height %d...", h)
@@ -387,10 +387,10 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 			select {
 			case req := <-publishedBlocks:
 				require.Equal(t, fmt.Sprintf("block-%d", proposalBlock.Height), req.BlockID)
-				require.Equal(t, expectedCells, len(req.Data))
+				require.Equal(t, expectedK*expectedK, len(req.Data))
 				require.NotNil(t, req.Header)
 				require.True(t, strings.EqualFold(proposalBlock.Header.CommitsRoot.String(), req.Header.CommitsRoot))
-				require.Equal(t, expectedCols, len(req.Header.ColumnComm))
+				require.Equal(t, 2*expectedK, len(req.Header.ColumnComm))
 				t.Logf("[Publisher Bridge] ✅ SUCCESS: Mock Publisher received committed block %s (height %d) with verified BFT Header!",
 					req.BlockID, h)
 			case <-time.After(3 * time.Second):

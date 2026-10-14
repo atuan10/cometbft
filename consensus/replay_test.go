@@ -978,7 +978,7 @@ func makeBlocks(n int, state sm.State, privVals []types.PrivValidator) ([]*types
 		if err != nil {
 			return nil, err
 		}
-		block, err := state.MakeBlock(height, test.MakeNTxs(height, 10), lastCommit, nil, state.LastValidators.Proposer.Address)
+		block, err := state.MakeBlock(height, test.MakeNTxs(height, 10), lastCommit, nil, state.LastValidators.Proposer.Address, nil, nil, nil)
 		if err != nil {
 			return nil, err
 		}

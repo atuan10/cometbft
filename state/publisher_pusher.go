@@ -16,6 +16,13 @@ import (
 )
 
 type HeaderPayload struct {
+	ChainID         string    `json:"chain_id,omitempty"`
+	Height          int64     `json:"height,omitempty"`
+	Time            time.Time `json:"time,omitempty"`
+	DataHash        string    `json:"data_hash,omitempty"`
+	AppHash         string    `json:"app_hash,omitempty"`
+	ProposerAddress string    `json:"proposer_address,omitempty"`
+
 	CommitsRoot string   `json:"commits_root,omitempty"`
 	ColumnComm  []string `json:"column_comm,omitempty"`
 	Coeffs      string   `json:"coeffs,omitempty"`
@@ -24,6 +31,7 @@ type HeaderPayload struct {
 type PublishRequest struct {
 	BlockID   string         `json:"block_id"`
 	Height    int64          `json:"height,omitempty"`
+	K         int            `json:"k,omitempty"`
 	Data      []string       `json:"data"`
 	Header    *HeaderPayload `json:"header,omitempty"`
 	Signature string         `json:"signature,omitempty"`
@@ -80,9 +88,15 @@ func (p *PublisherPusher) PushCommittedBlock(block *types.Block) error {
 			colCommHex[i] = hex.EncodeToString(col)
 		}
 		headerPayload = &HeaderPayload{
-			CommitsRoot: hex.EncodeToString(block.Header.CommitsRoot),
-			ColumnComm:  colCommHex,
-			Coeffs:      hex.EncodeToString(block.Header.Coeffs),
+			ChainID:         block.Header.ChainID,
+			Height:          block.Header.Height,
+			Time:            block.Header.Time,
+			DataHash:        hex.EncodeToString(block.Header.DataHash),
+			AppHash:         hex.EncodeToString(block.Header.AppHash),
+			ProposerAddress: block.Header.ProposerAddress.String(),
+			CommitsRoot:     hex.EncodeToString(block.Header.CommitsRoot),
+			ColumnComm:      colCommHex,
+			Coeffs:          hex.EncodeToString(block.Header.Coeffs),
 		}
 	}
 
