@@ -28,12 +28,21 @@ type HeaderPayload struct {
 	Coeffs      string   `json:"coeffs,omitempty"`
 }
 
+type TxSummary struct {
+	Hash   string `json:"hash"`
+	Key    string `json:"key,omitempty"`
+	Offset int    `json:"offset"`
+	Cells  int    `json:"cells"`
+	Size   int    `json:"size"`
+}
+
 type PublishRequest struct {
 	BlockID   string         `json:"block_id"`
 	Height    int64          `json:"height,omitempty"`
 	K         int            `json:"k,omitempty"`
 	Data      []string       `json:"data"`
 	Header    *HeaderPayload `json:"header,omitempty"`
+	Txs       []TxSummary    `json:"txs,omitempty"`
 	Signature string         `json:"signature,omitempty"`
 }
 
@@ -100,11 +109,48 @@ func (p *PublisherPusher) PushCommittedBlock(block *types.Block) error {
 		}
 	}
 
+	cellSize := getCDACellSizeVal()
+	hexLen := cellSize * 2
+	currentCellOffset := 0
+	txSummaries := make([]TxSummary, 0, len(block.Data.Txs))
+
+	for _, tx := range block.Data.Txs {
+		txBytes := []byte(tx)
+		txHash := strings.ToUpper(hex.EncodeToString(tx.Hash()))
+		var txKey string
+		txStr := string(txBytes)
+		if eqIdx := strings.IndexByte(txStr, '='); eqIdx > 0 {
+			txKey = txStr[:eqIdx]
+		}
+
+		numCells := 1
+		if len(txBytes) == hexLen || len(txBytes) == 128 {
+			if _, err := hex.DecodeString(txStr); err == nil {
+				numCells = 1
+			}
+		} else {
+			numCells = (len(txBytes) + cellSize - 1) / cellSize
+			if numCells <= 0 {
+				numCells = 1
+			}
+		}
+
+		txSummaries = append(txSummaries, TxSummary{
+			Hash:   txHash,
+			Key:    txKey,
+			Offset: currentCellOffset,
+			Cells:  numCells,
+			Size:   len(txBytes),
+		})
+		currentCellOffset += numCells
+	}
+
 	reqPayload := PublishRequest{
 		BlockID: blockID,
 		Height:  block.Height,
 		Data:    dataHex,
 		Header:  headerPayload,
+		Txs:     txSummaries,
 	}
 
 	bz, err := json.Marshal(reqPayload)
