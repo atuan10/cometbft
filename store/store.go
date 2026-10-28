@@ -571,7 +571,7 @@ func (bs *BlockStore) saveBlockToBatch(
 	if err := batch.Set(calcBlockMetaKey(height), metaBytes); err != nil {
 		return err
 	}
-	if err := batch.Set(calcBlockHashKey(hash), []byte(fmt.Sprintf("%d", height))); err != nil {
+	if err := batch.Set(calcBlockHashKey(hash), fmt.Appendf(nil, "%d", height)); err != nil {
 		return err
 	}
 
@@ -642,27 +642,27 @@ func (bs *BlockStore) Close() error {
 //-----------------------------------------------------------------------------
 
 func calcBlockMetaKey(height int64) []byte {
-	return []byte(fmt.Sprintf("H:%v", height))
+	return fmt.Appendf(nil, "H:%v", height)
 }
 
 func calcBlockPartKey(height int64, partIndex int) []byte {
-	return []byte(fmt.Sprintf("P:%v:%v", height, partIndex))
+	return fmt.Appendf(nil, "P:%v:%v", height, partIndex)
 }
 
 func calcBlockCommitKey(height int64) []byte {
-	return []byte(fmt.Sprintf("C:%v", height))
+	return fmt.Appendf(nil, "C:%v", height)
 }
 
 func calcSeenCommitKey(height int64) []byte {
-	return []byte(fmt.Sprintf("SC:%v", height))
+	return fmt.Appendf(nil, "SC:%v", height)
 }
 
 func calcExtCommitKey(height int64) []byte {
-	return []byte(fmt.Sprintf("EC:%v", height))
+	return fmt.Appendf(nil, "EC:%v", height)
 }
 
 func calcBlockHashKey(hash []byte) []byte {
-	return []byte(fmt.Sprintf("BH:%x", hash))
+	return fmt.Appendf(nil, "BH:%x", hash)
 }
 
 //-----------------------------------------------------------------------------

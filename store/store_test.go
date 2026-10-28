@@ -164,7 +164,7 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 
 	// save a block big enough to have two block parts
 	txs := []types.Tx{make([]byte, types.BlockPartSizeBytes)} // TX taking one block part alone
-	block, err := state.MakeBlock(bs.Height()+1, txs, new(types.Commit), nil, state.Validators.GetProposer().Address)
+	block, err := state.MakeBlock(bs.Height()+1, txs, new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 	require.NoError(t, err)
 	validPartSet, err := block.MakePartSet(types.BlockPartSizeBytes)
 	require.NoError(t, err)
@@ -389,7 +389,7 @@ func TestLoadBlockProto(t *testing.T) {
 	// missing block returns nil
 	require.Nil(t, bs.LoadBlockProto(1))
 
-	block, err := state.MakeBlock(1, nil, new(types.Commit), nil, state.Validators.GetProposer().Address)
+	block, err := state.MakeBlock(1, nil, new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 	require.NoError(t, err)
 	partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
 	require.NoError(t, err)
@@ -434,7 +434,7 @@ func TestSaveBlockWithExtendedCommitPanicOnAbsentExtension(t *testing.T) {
 			state, bs, cleanup := makeStateAndBlockStore()
 			defer cleanup()
 			h := bs.Height() + 1
-			block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+			block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 			require.NoError(t, err)
 
 			seenCommit := makeTestExtCommit(block.Height, cmttime.Now())
@@ -476,7 +476,7 @@ func TestLoadBlockExtendedCommit(t *testing.T) {
 			state, bs, cleanup := makeStateAndBlockStore()
 			defer cleanup()
 			h := bs.Height() + 1
-			block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+			block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 			require.NoError(t, err)
 			seenCommit := makeTestExtCommit(block.Height, cmttime.Now())
 			ps, err := block.MakePartSet(types.BlockPartSizeBytes)
@@ -507,7 +507,7 @@ func TestLoadBaseMeta(t *testing.T) {
 	bs := NewBlockStore(dbm.NewMemDB())
 
 	for h := int64(1); h <= 10; h++ {
-		block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+		block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 		require.NoError(t, err)
 		partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
 		require.NoError(t, err)
@@ -553,7 +553,7 @@ func TestLoadBlockPart(t *testing.T) {
 	require.Contains(t, panicErr.Error(), "unmarshal to cmtproto.Part failed")
 
 	// 3. A good block serialized and saved to the DB should be retrievable
-	block, err := state.MakeBlock(height, nil, new(types.Commit), nil, state.Validators.GetProposer().Address)
+	block, err := state.MakeBlock(height, nil, new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 	require.NoError(t, err)
 	partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
 	require.NoError(t, err)
@@ -599,7 +599,7 @@ func TestPruneBlocks(t *testing.T) {
 
 	// make more than 1000 blocks, to test batch deletions
 	for h := int64(1); h <= 1500; h++ {
-		block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+		block, err := state.MakeBlock(h, test.MakeNTxs(h, 10), new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 		require.NoError(t, err)
 		partSet, err := block.MakePartSet(types.BlockPartSizeBytes)
 		require.NoError(t, err)
@@ -735,7 +735,7 @@ func TestLoadBlockMetaByHash(t *testing.T) {
 	require.NoError(t, err)
 	bs := NewBlockStore(dbm.NewMemDB())
 
-	b1, err := state.MakeBlock(state.LastBlockHeight+1, test.MakeNTxs(state.LastBlockHeight+1, 10), new(types.Commit), nil, state.Validators.GetProposer().Address)
+	b1, err := state.MakeBlock(state.LastBlockHeight+1, test.MakeNTxs(state.LastBlockHeight+1, 10), new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 	require.NoError(t, err)
 	partSet, err := b1.MakePartSet(types.BlockPartSizeBytes)
 	require.NoError(t, err)
@@ -752,7 +752,7 @@ func TestBlockFetchAtHeight(t *testing.T) {
 	state, bs, cleanup := makeStateAndBlockStore()
 	defer cleanup()
 	require.Equal(t, bs.Height(), int64(0), "initially the height should be zero")
-	block, err := state.MakeBlock(bs.Height()+1, nil, new(types.Commit), nil, state.Validators.GetProposer().Address)
+	block, err := state.MakeBlock(bs.Height()+1, nil, new(types.Commit), nil, state.Validators.GetProposer().Address, nil, nil, nil)
 	require.NoError(t, err)
 
 	partSet, err := block.MakePartSet(types.BlockPartSizeBytes)

@@ -52,7 +52,7 @@ type peerError struct {
 	peerID p2p.ID
 }
 
-func (e peerError) Error() string {
+func (e *peerError) Error() string {
 	return fmt.Sprintf("error with peer %v: %s", e.peerID, e.err.Error())
 }
 
