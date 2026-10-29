@@ -175,8 +175,33 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 		return nil, err
 	}
 
+	// CDA Pipeline Backpressure Gate:
+	// If the pipeline is saturated (in_flight >= 2), wait up to bounded duration (default 400ms)
+	// for the in-flight block to finish. If still saturated, throttle proposal to lean block to keep consensus moving.
+	if len(txl) > 0 && os.Getenv("DISABLE_AUTO_PUBLISHER_PUSH") != "true" {
+		maxWait := 400 * time.Millisecond
+		if envWait := os.Getenv("CDA_BACKPRESSURE_MAX_WAIT"); envWait != "" {
+			if d, err := time.ParseDuration(envWait); err == nil && d > 0 {
+				maxWait = d
+			}
+		}
+		deadline := time.Now().Add(maxWait)
+		for time.Now().Before(deadline) {
+			inFlight := CheckPipelineInFlight()
+			if inFlight < 2 {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if inFlight := CheckPipelineInFlight(); inFlight >= 2 {
+			blockExec.logger.Info("[CDA Backpressure] Pipeline saturated, throttling proposal to lean block to maintain 1-block-ahead buffer",
+				"height", height, "in_flight", inFlight)
+			txl = types.Txs{}
+		}
+	}
+
 	odsData := block.Data.ODS
-	if len(odsData.Cells) == 0 {
+	if len(odsData.Cells) == 0 && len(txl) > 0 {
 		optimalK := cda.ComputeOptimalODSK(CountCellsFromTxs(txl), cda.DefaultMinODSK, getCDAMaxKVal())
 		odsData = BuildODSFromTxs(txl, optimalK)
 	}

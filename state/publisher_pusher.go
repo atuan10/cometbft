@@ -175,3 +175,37 @@ func (p *PublisherPusher) PushCommittedBlock(block *types.Block) error {
 	log.Printf("[PublisherPusher] Successfully published block %s (height %d) to Publisher Node", blockID, block.Height)
 	return nil
 }
+
+// CheckPipelineInFlight queries Publisher Node /status to get the current in-flight pipeline count.
+// Returns -1 if Publisher is unreachable or auto-publisher-push is disabled.
+func CheckPipelineInFlight() int {
+	if os.Getenv("DISABLE_AUTO_PUBLISHER_PUSH") == "true" {
+		return 0
+	}
+	pubURL := os.Getenv("PUBLISHER_URL")
+	if pubURL == "" {
+		pubURL = "http://localhost:8080/publish"
+	}
+	baseURL := strings.TrimSuffix(pubURL, "/publish")
+	statusURL := baseURL + "/status"
+
+	client := &http.Client{Timeout: 250 * time.Millisecond}
+	resp, err := client.Get(statusURL)
+	if err != nil {
+		return -1
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return -1
+	}
+
+	var st struct {
+		InFlightCount int `json:"in_flight_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return -1
+	}
+	return st.InFlightCount
+}
+
