@@ -139,11 +139,18 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 
 	evidence, evSize := blockExec.evpool.PendingEvidence(state.ConsensusParams.Evidence.MaxBytes)
 
-	// Fetch a limited amount of valid txs
+	// Fetch a limited amount of valid txs bounded by maximum ODS matrix capacity
+	maxK := types.GetCDAMaxK()
+	maxODSCells := types.GetCDAMaxODSCells()
+	maxODSBytes := types.GetCDAMaxODSBytes()
+
 	maxDataBytes := types.MaxDataBytes(maxBytes, evSize, state.Validators.Size())
+	if maxDataBytes > maxODSBytes {
+		maxDataBytes = maxODSBytes
+	}
 	maxReapBytes := maxDataBytes
 	if emptyMaxBytes {
-		maxReapBytes = -1
+		maxReapBytes = maxODSBytes
 	}
 
 	txs := blockExec.mempool.ReapMaxBytesMaxGas(maxReapBytes, maxGas)
@@ -173,6 +180,36 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 	txl := types.ToTxs(rpp.Txs)
 	if err := txl.Validate(maxDataBytes); err != nil {
 		return nil, err
+	}
+
+	// Canonical CDA Namespace Ordering:
+	// Proposer ensures transactions are sorted deterministically before building ODS matrix
+	types.SortCDATxs(txl)
+
+	// Enforce Strict CDA Data Availability Invariant:
+	// Every transaction included in the proposal block MUST be completely contained in the ODS matrix.
+	// Prune txl if total required cells exceed maxODSCells (K_max * K_max).
+	// Deferred transactions remain safely in the mempool to be packaged into the next block.
+	if len(txl) > 0 && types.CountCellsFromTxs(txl) > maxODSCells {
+		cellSize := types.GetCDACellSize()
+		fittingTxs := make(types.Txs, 0, len(txl))
+		accumulatedCells := 0
+		for _, tx := range txl {
+			txCells := types.CountCellsFromTx(tx, cellSize)
+			if accumulatedCells+txCells > maxODSCells {
+				continue // Use continue (greedy space packing) to prevent Head-of-Line blocking
+			}
+			fittingTxs = append(fittingTxs, tx)
+			accumulatedCells += txCells
+		}
+		blockExec.logger.Warn("[CDA ODS] Bounded proposal transactions to ODS matrix capacity, remaining txs deferred in mempool",
+			"reaped_txs", len(txl),
+			"packed_txs", len(fittingTxs),
+			"deferred_to_mempool", len(txl)-len(fittingTxs),
+			"cells_used", accumulatedCells,
+			"max_cells", maxODSCells,
+			"k_max", maxK)
+		txl = fittingTxs
 	}
 
 	// CDA Pipeline Backpressure Gate:

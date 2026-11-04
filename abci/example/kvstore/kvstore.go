@@ -16,6 +16,7 @@ import (
 	cryptoencoding "github.com/cometbft/cometbft/crypto/encoding"
 	"github.com/cometbft/cometbft/libs/log"
 	cryptoproto "github.com/cometbft/cometbft/proto/tendermint/crypto"
+	cmttypes "github.com/cometbft/cometbft/types"
 	"github.com/cometbft/cometbft/version"
 )
 
@@ -158,11 +159,14 @@ func isValidTx(tx []byte) bool {
 }
 
 // PrepareProposal is called when the node is a proposer. CometBFT stages a set of transactions to the application. As the
-// KVStore has two accepted formats, `:` and `=`, we modify all instances of `:` with `=` to make it consistent. Note: this is
-// quite a trivial example of transaction modification.
-// NOTE: we assume that CometBFT will never provide more transactions than can fit in a block.
+// KVStore has two accepted formats, `:` and `=`, we modify all instances of `:` with `=` to make it consistent.
+// Furthermore, it performs Canonical CDA Namespace Ordering so that all transactions are sorted by namespace,
+// blob ID, manifest, and slice index.
 func (app *Application) PrepareProposal(ctx context.Context, req *types.RequestPrepareProposal) (*types.ResponsePrepareProposal, error) {
-	return &types.ResponsePrepareProposal{Txs: app.formatTxs(ctx, req.Txs)}, nil
+	formatted := app.formatTxs(ctx, req.Txs)
+	txs := cmttypes.ToTxs(formatted)
+	cmttypes.SortCDATxs(txs)
+	return &types.ResponsePrepareProposal{Txs: txs.ToSliceOfBytes()}, nil
 }
 
 // formatTxs validates and excludes invalid transactions
@@ -178,8 +182,15 @@ func (app *Application) formatTxs(ctx context.Context, blockData [][]byte) [][]b
 }
 
 // ProcessProposal is called whenever a node receives a complete proposal. It allows the application to validate the proposal.
-// Only validators who can vote will have this method called. For the KVstore we reuse CheckTx.
+// In CDA Network, ProcessProposal verifies that the proposal transactions strictly adhere to Canonical Namespace Ordering
+// before checking individual transaction validity.
 func (app *Application) ProcessProposal(ctx context.Context, req *types.RequestProcessProposal) (*types.ResponseProcessProposal, error) {
+	txs := cmttypes.ToTxs(req.Txs)
+	if sorted, err := cmttypes.IsCDATxsSorted(txs); !sorted {
+		app.logger.Error("Rejecting proposal: transactions violate canonical CDA namespace ordering", "err", err)
+		return &types.ResponseProcessProposal{Status: types.ResponseProcessProposal_REJECT}, nil
+	}
+
 	for _, tx := range req.Txs {
 		// As CheckTx is a full validity check we can simply reuse this
 		if resp, err := app.CheckTx(ctx, &types.RequestCheckTx{Tx: tx}); err != nil || resp.Code != CodeTypeOK {

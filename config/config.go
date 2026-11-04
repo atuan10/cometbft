@@ -986,6 +986,10 @@ type MempoolConfig struct {
 	// Maximum size of a single transaction
 	// NOTE: the max size of a tx transmitted over the network is {max_tx_bytes}.
 	MaxTxBytes int `mapstructure:"max_tx_bytes"`
+	// MaxSkipCount (default: 15) defines the maximum number of oversized transactions
+	// to skip during block reaping before halting the search, preventing Head-of-Line blocking
+	// while strictly bounding search latency. Setting this to 0 reverts to legacy non-greedy FIFO.
+	MaxSkipCount int `mapstructure:"max_skip_count"`
 	// Maximum size of a batch of transactions to send to a peer
 	// Including space needed by encoding (one varint per transaction).
 	// XXX: Unused due to https://github.com/tendermint/tendermint/issues/5796
@@ -1031,6 +1035,7 @@ func DefaultMempoolConfig() *MempoolConfig {
 		MaxTxsBytes: 1024 * 1024 * 1024, // 1GB
 		CacheSize:   10000,
 		MaxTxBytes:  4 * 1024 * 1024, // 4MB
+		MaxSkipCount: 15,
 		ExperimentalMaxGossipConnectionsToNonPersistentPeers: 0,
 		ExperimentalMaxGossipConnectionsToPersistentPeers:    0,
 		// App mempool defaults
@@ -1080,6 +1085,9 @@ func (cfg *MempoolConfig) ValidateBasic() error {
 	}
 	if cfg.MaxTxBytes < 0 {
 		return cmterrors.ErrNegativeField{Field: "max_tx_bytes"}
+	}
+	if cfg.MaxSkipCount < 0 {
+		return cmterrors.ErrNegativeField{Field: "max_skip_count"}
 	}
 	if cfg.ExperimentalMaxGossipConnectionsToPersistentPeers < 0 {
 		return errors.New("experimental_max_gossip_connections_to_persistent_peers can't be negative")

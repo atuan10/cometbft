@@ -25,20 +25,7 @@ func getCDAKVal() int {
 }
 
 func getCDAMaxKVal() int {
-	if envMaxK := os.Getenv("CDA_MAX_K"); envMaxK != "" {
-		if parsedMaxK, err := strconv.Atoi(envMaxK); err == nil && parsedMaxK > 0 {
-			return parsedMaxK
-		}
-	}
-	if envK := os.Getenv("CDA_K"); envK != "" {
-		if parsedK, err := strconv.Atoi(envK); err == nil && parsedK > 0 {
-			if parsedK > 64 {
-				return parsedK
-			}
-			return 64
-		}
-	}
-	return cda.DefaultMaxODSK
+	return types.GetCDAMaxK()
 }
 
 func getCDAKPieceVal() int {
@@ -51,12 +38,7 @@ func getCDAKPieceVal() int {
 }
 
 func getCDACellSizeVal() int {
-	if envCellSize := os.Getenv("CDA_CELL_SIZE"); envCellSize != "" {
-		if parsedSize, err := strconv.Atoi(envCellSize); err == nil && parsedSize > 0 {
-			return parsedSize
-		}
-	}
-	return 512
+	return types.GetCDACellSize()
 }
 
 var (
@@ -147,26 +129,14 @@ func ComputeCDAHeader(ods *types.ODSData) (commitsRoot []byte, columnComm [][]by
 	return root, columnComm, coeffBytes, nil
 }
 
+// CountCellsFromTx counts the number of cells required to store a single tx.
+func CountCellsFromTx(tx types.Tx, cellSize int) int {
+	return types.CountCellsFromTx(tx, cellSize)
+}
+
 // CountCellsFromTxs counts the number of cells required to store txs using configured cell size.
 func CountCellsFromTxs(txs types.Txs) int {
-	cellSize := getCDACellSizeVal()
-	count := 0
-	hexLen := cellSize * 2
-	for _, tx := range txs {
-		txBytes := []byte(tx)
-		if len(txBytes) == hexLen || len(txBytes) == 128 {
-			if _, err := hex.DecodeString(string(txBytes)); err == nil {
-				count++
-				continue
-			}
-		}
-		chunks := (len(txBytes) + cellSize - 1) / cellSize
-		if chunks <= 0 {
-			chunks = 1
-		}
-		count += chunks
-	}
-	return count
+	return types.CountCellsFromTxs(txs)
 }
 
 // BuildODSFromTxs constructs a K x K Original Data Square from transaction payloads.
@@ -241,6 +211,23 @@ func BuildODSFromTxs(txs types.Txs, k int) types.ODSData {
 func VerifyCDAHeader(block *types.Block) error {
 	if block == nil {
 		return fmt.Errorf("nil block")
+	}
+
+	// 1. Verify Canonical CDA Namespace Ordering:
+	// All transactions in a proposed/committed block MUST strictly adhere to Canonical Namespace Ordering.
+	if len(block.Data.Txs) > 0 {
+		if sorted, err := types.IsCDATxsSorted(block.Data.Txs); !sorted {
+			return fmt.Errorf("invalid block transaction order: %w", err)
+		}
+
+		// 2. Enforce CDA Data Availability Invariant:
+		// Total cells required by all block transactions MUST NOT exceed maximum ODS matrix capacity.
+		maxK := getCDAMaxKVal()
+		maxODSCells := maxK * maxK
+		if cellsNeeded := CountCellsFromTxs(block.Data.Txs); cellsNeeded > maxODSCells {
+			return fmt.Errorf("block transactions require %d cells, exceeding maximum ODS capacity of %d cells (K=%d)",
+				cellsNeeded, maxODSCells, maxK)
+		}
 	}
 
 	// If block ODS data is empty but block has transactions, construct ODS from Txs

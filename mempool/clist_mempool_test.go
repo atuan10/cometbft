@@ -7,6 +7,7 @@ import (
 	"fmt"
 	mrand "math/rand"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -190,6 +191,180 @@ func TestReapMaxBytesMaxGas(t *testing.T) {
 			len(got), tt.expectedNumTxs, tcIndex)
 		mp.Flush()
 	}
+}
+
+func TestReapMaxBytesMaxGas_BoundedGreedyScenario(t *testing.T) {
+	app := kvstore.NewInMemoryApplication()
+	cc := proxy.NewLocalClientCreator(app)
+	conf := test.ResetTestRoot("mempool_greedy_test")
+	conf.Mempool.MaxSkipCount = 15
+	mp, cleanup := newMempoolWithAppAndConfig(cc, conf)
+	defer cleanup()
+
+	// Scenario from user:
+	// Txn A: ~250 bytes (0.25 of limit)
+	// Txn B: ~1000 bytes (1.0 of limit, blocks standard FIFO)
+	// Txn C: ~500 bytes (0.50 of limit)
+	txA := types.Tx(fmt.Sprintf("keyA=%s", strings.Repeat("A", 240)))
+	txB := types.Tx(fmt.Sprintf("keyB=%s", strings.Repeat("B", 990)))
+	txC := types.Tx(fmt.Sprintf("keyC=%s", strings.Repeat("C", 490)))
+
+	callCheckTx(t, mp, types.Txs{txA, txB, txC}, UnknownPeerID)
+	require.Equal(t, 3, mp.Size())
+
+	sizeA := types.ComputeProtoSizeForTxs([]types.Tx{txA})
+	sizeB := types.ComputeProtoSizeForTxs([]types.Tx{txB})
+	sizeC := types.ComputeProtoSizeForTxs([]types.Tx{txC})
+
+	// Set maxBytes large enough for TxA + TxC, but NOT TxA + TxB
+	maxBytes := sizeA + sizeC + 10
+	require.Less(t, maxBytes, sizeA+sizeB, "maxBytes must be strictly smaller than TxA + TxB")
+
+	// 1. With Bounded Greedy Packing enabled:
+	// Proposer reaps TxA, skips oversized TxB, and reaps TxC into Block N!
+	reaped := mp.ReapMaxBytesMaxGas(maxBytes, -1)
+	require.Equal(t, 2, len(reaped), "Bounded greedy reap must reap TxA and TxC, skipping TxB")
+	assert.Equal(t, txA.Key(), reaped[0].Key(), "1st reaped tx must be TxA")
+	assert.Equal(t, txC.Key(), reaped[1].Key(), "2nd reaped tx must be TxC")
+
+	// 2. Commit Block N containing [TxA, TxC]
+	abciResponses := []*abci.ExecTxResult{
+		{Code: abci.CodeTypeOK},
+		{Code: abci.CodeTypeOK},
+	}
+	err := mp.Update(1, reaped, abciResponses, nil, nil)
+	require.NoError(t, err)
+
+	// Mempool size must now be 1, holding solely TxB at the head of the queue!
+	require.Equal(t, 1, mp.Size())
+	frontTx := mp.TxsFront().Value.(*mempoolTx)
+	assert.Equal(t, txB.Key(), frontTx.tx.Key(), "TxB must remain at the front of the queue for Block N+1")
+
+	// 3. Block N+1 Proposal: Reaps TxB
+	reapedBlock2 := mp.ReapMaxBytesMaxGas(sizeB+50, -1)
+	require.Equal(t, 1, len(reapedBlock2))
+	assert.Equal(t, txB.Key(), reapedBlock2[0].Key())
+
+	err = mp.Update(2, reapedBlock2, []*abci.ExecTxResult{{Code: abci.CodeTypeOK}}, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, mp.Size(), "Mempool must be completely cleared after Block N+1")
+}
+
+func TestReapMaxBytesMaxGas_SkipBudgetEnforcement(t *testing.T) {
+	app := kvstore.NewInMemoryApplication()
+	cc := proxy.NewLocalClientCreator(app)
+	conf := test.ResetTestRoot("mempool_skip_budget_test")
+	// Set MaxSkipCount = 5
+	conf.Mempool.MaxSkipCount = 5
+	mp, cleanup := newMempoolWithAppAndConfig(cc, conf)
+	defer cleanup()
+
+	// Enqueue TxA (50 bytes)
+	txA := types.Tx(fmt.Sprintf("keyA=%s", strings.Repeat("A", 50)))
+	callCheckTx(t, mp, types.Txs{txA}, UnknownPeerID)
+
+	// Enqueue 10 oversized txs (each 1000 bytes)
+	oversizedTxs := make(types.Txs, 10)
+	for i := 0; i < 10; i++ {
+		oversizedTxs[i] = types.Tx(fmt.Sprintf("keyBig%02d=%s", i, strings.Repeat("X", 990)))
+	}
+	callCheckTx(t, mp, oversizedTxs, UnknownPeerID)
+
+	// Enqueue TxC (50 bytes) behind the 10 oversized txs
+	txC := types.Tx(fmt.Sprintf("keyC=%s", strings.Repeat("C", 50)))
+	callCheckTx(t, mp, types.Txs{txC}, UnknownPeerID)
+
+	sizeA := types.ComputeProtoSizeForTxs([]types.Tx{txA})
+	sizeC := types.ComputeProtoSizeForTxs([]types.Tx{txC})
+	maxBytes := sizeA + sizeC + 10 // Room for TxA and TxC, but NOT oversized txs
+
+	// With MaxSkipCount = 5, after skipping 5 oversized txs, search terminates early!
+	// TxC is never reached because it's behind 10 oversized txs (exceeds budget 5).
+	reaped := mp.ReapMaxBytesMaxGas(maxBytes, -1)
+	require.Equal(t, 1, len(reaped), "Must stop after exhausting skip budget (5), not reaching TxC")
+	assert.Equal(t, txA.Key(), reaped[0].Key())
+
+	// Now reconfigure mempool with MaxSkipCount = 15 (larger than 10)
+	mp.config.MaxSkipCount = 15
+	reaped2 := mp.ReapMaxBytesMaxGas(maxBytes, -1)
+	require.Equal(t, 2, len(reaped2), "With skip budget 15, must skip all 10 oversized txs and reach TxC")
+	assert.Equal(t, txA.Key(), reaped2[0].Key())
+	assert.Equal(t, txC.Key(), reaped2[1].Key())
+}
+
+func TestReapMaxBytesMaxGas_LegacyStrictFIFOWhenZeroSkip(t *testing.T) {
+	app := kvstore.NewInMemoryApplication()
+	cc := proxy.NewLocalClientCreator(app)
+	conf := test.ResetTestRoot("mempool_strict_fifo_test")
+	conf.Mempool.MaxSkipCount = 0 // Disable greedy packing (legacy strict FIFO)
+	mp, cleanup := newMempoolWithAppAndConfig(cc, conf)
+	defer cleanup()
+
+	txA := types.Tx(fmt.Sprintf("keyA=%s", strings.Repeat("A", 240)))
+	txB := types.Tx(fmt.Sprintf("keyB=%s", strings.Repeat("B", 990)))
+	txC := types.Tx(fmt.Sprintf("keyC=%s", strings.Repeat("C", 490)))
+	callCheckTx(t, mp, types.Txs{txA, txB, txC}, UnknownPeerID)
+
+	sizeA := types.ComputeProtoSizeForTxs([]types.Tx{txA})
+	sizeC := types.ComputeProtoSizeForTxs([]types.Tx{txC})
+	maxBytes := sizeA + sizeC + 10
+
+	// When MaxSkipCount = 0, halts at first oversized tx (TxB)
+	reaped := mp.ReapMaxBytesMaxGas(maxBytes, -1)
+	require.Equal(t, 1, len(reaped), "Legacy strict FIFO must halt at TxB and return only TxA")
+	assert.Equal(t, txA.Key(), reaped[0].Key())
+}
+
+func TestReapMaxBytesMaxGas_CDACellCapacityBound(t *testing.T) {
+	// Configure K_max = 16 -> maxODSCells = 16 * 16 = 256 cells
+	os.Setenv("CDA_MAX_K", "16")
+	defer os.Unsetenv("CDA_MAX_K")
+
+	app := kvstore.NewInMemoryApplication()
+	cc := proxy.NewLocalClientCreator(app)
+	conf := test.ResetTestRoot("mempool_cell_bound_test")
+	conf.Mempool.MaxSkipCount = 5
+	mp, cleanup := newMempoolWithAppAndConfig(cc, conf)
+	defer cleanup()
+
+	cellSize := types.GetCDACellSize()
+	require.Equal(t, 512, cellSize)
+	require.Equal(t, 256, types.GetCDAMaxODSCells())
+
+	// Create 6 transactions, each requiring 50 cells (50 * 512 = 25,600 bytes)
+	// Use non-hex characters ('z') so it doesn't get treated as hex string
+	txs := make(types.Txs, 6)
+	for i := 0; i < 6; i++ {
+		txPayload := strings.Repeat("z", 50*cellSize-20)
+		txs[i] = types.Tx(fmt.Sprintf("cda/user/tx_%d=%s", i, txPayload))
+		require.Equal(t, 50, types.CountCellsFromTx(txs[i], cellSize))
+	}
+
+	callCheckTx(t, mp, txs, UnknownPeerID)
+	require.Equal(t, 6, mp.Size())
+
+	// Call Reap with a huge byte limit (100 MB)
+	// Byte limit alone would allow all 6 txs (6 * 25.6 KB = ~153 KB << 100 MB)
+	// BUT cell limit is 256 cells. 5 txs = 250 cells <= 256. 6th tx = 300 cells > 256.
+	reaped := mp.ReapMaxBytesMaxGas(100*1024*1024, -1)
+
+	// MUST reap exactly 5 transactions (250 cells), strictly respecting ODS cell bound!
+	require.Equal(t, 5, len(reaped), "ReapMaxBytesMaxGas MUST strictly respect CDA ODS cell bound (256 cells)")
+	reapedCells := types.CountCellsFromTxs(reaped)
+	require.Equal(t, 250, reapedCells)
+	require.LessOrEqual(t, reapedCells, types.GetCDAMaxODSCells())
+
+	// 6th transaction must remain safely in the mempool
+	abciResponses := make([]*abci.ExecTxResult, 5)
+	for i := 0; i < 5; i++ {
+		abciResponses[i] = &abci.ExecTxResult{Code: abci.CodeTypeOK}
+	}
+	err := mp.Update(1, reaped, abciResponses, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, mp.Size(), "Mempool must retain the 6th transaction that exceeded cell capacity")
+	remainingTx := mp.TxsFront().Value.(*mempoolTx)
+	assert.Equal(t, txs[5].Key(), remainingTx.tx.Key())
 }
 
 func TestMempoolFilters(t *testing.T) {

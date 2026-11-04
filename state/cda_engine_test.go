@@ -67,3 +67,39 @@ func TestCDAHeaderComputeAndVerify(t *testing.T) {
 		t.Fatalf("expected VerifyCDAHeader to fail for invalid root, but it passed")
 	}
 }
+
+func TestCDAODSMatrixCapacityEnforcement(t *testing.T) {
+	cellSize := getCDACellSizeVal()
+	maxK := getCDAMaxKVal()
+	maxCells := maxK * maxK
+
+	// Generate transactions that exceed maxCells (e.g. 5,000 cells)
+	// Each tx is 512 bytes (1 cell)
+	overflowTxCount := maxCells + 500
+	overflowTxs := make(types.Txs, overflowTxCount)
+	for i := 0; i < overflowTxCount; i++ {
+		overflowTxs[i] = types.Tx([]byte(fmt.Sprintf("cda/test/tx_%08d=%0*d", i, cellSize-30, i)))
+	}
+
+	cellsNeeded := CountCellsFromTxs(overflowTxs)
+	if cellsNeeded != overflowTxCount {
+		t.Fatalf("expected %d cells, got %d", overflowTxCount, cellsNeeded)
+	}
+
+	// Verify that VerifyCDAHeader rejects block with overflow transactions
+	overflowBlock := &types.Block{
+		Header: types.Header{
+			CommitsRoot: []byte("dummy_root_32_bytes_test_len!"),
+			ColumnComm:  make([][]byte, 2*maxK),
+		},
+		Data: types.Data{
+			Txs: overflowTxs,
+		},
+	}
+
+	err := VerifyCDAHeader(overflowBlock)
+	if err == nil {
+		t.Fatalf("expected VerifyCDAHeader to REJECT block exceeding max ODS cells, but it passed")
+	}
+	t.Logf("Successfully rejected overflowing block: %v", err)
+}
