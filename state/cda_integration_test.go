@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -41,17 +39,12 @@ func TestCDABlockProcessingAndPublishingLifecycle(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		body, err := io.ReadAll(r.Body)
+		req, err := sm.DecodePublishRequest(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		var req sm.PublishRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		publishedBlocks <- req
+		publishedBlocks <- *req
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"success"}`))
 	}))
@@ -148,15 +141,18 @@ func TestCDABlockProcessingAndPublishingLifecycle(t *testing.T) {
 func TestPublisherHeaderVerificationLifecycle(t *testing.T) {
 	// Start mock publisher server that enforces header verification like Publisher Node
 	publisherServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req sm.PublishRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req, err := sm.DecodePublishRequest(r.Body)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if req.Header != nil {
-			cells := make([][]byte, len(req.Data))
-			for i, d := range req.Data {
-				cells[i] = []byte(d)
+			cells := req.RawCells
+			if len(cells) == 0 {
+				cells = make([][]byte, len(req.Data))
+				for i, d := range req.Data {
+					cells[i] = []byte(d)
+				}
 			}
 			ods := types.ODSData{K: 32, Cells: cells}
 			expectedRoot, expectedCols, expectedCoeffs, err := sm.ComputeCDAHeader(&ods)
@@ -230,8 +226,8 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 	// 1. Mock Publisher Node receiver
 	publishedBlocks := make(chan sm.PublishRequest, 5)
 	publisherServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req sm.PublishRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req, err := sm.DecodePublishRequest(r.Body)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -240,7 +236,7 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 			http.Error(w, "missing HeaderPayload in publish request", http.StatusBadRequest)
 			return
 		}
-		publishedBlocks <- req
+		publishedBlocks <- *req
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"verified_and_accepted"}`))
 	}))
@@ -519,12 +515,12 @@ func TestNativeBlobTransaction_ConsensusFlowAndContiguousODS(t *testing.T) {
 	// 1. Mock Publisher Node
 	receivedPublishReq := make(chan sm.PublishRequest, 1)
 	publisherServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req sm.PublishRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req, err := sm.DecodePublishRequest(r.Body)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		receivedPublishReq <- req
+		receivedPublishReq <- *req
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"verified_and_accepted"}`))
 	}))
@@ -626,24 +622,26 @@ func TestMultiBlockMultiNamespace_HeavyTrafficStructuralVerification(t *testing.
 	var pubMu sync.Mutex
 
 	publisherServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req sm.PublishRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req, err := sm.DecodePublishRequest(r.Body)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Decode hex ODS cells
-		decodedCells := make([][]byte, len(req.Data))
-		for i, cellHex := range req.Data {
-			if decoded, err := hex.DecodeString(cellHex); err == nil {
-				decodedCells[i] = decoded
-			} else {
-				decodedCells[i] = []byte(cellHex)
+		decodedCells := req.RawCells
+		if len(decodedCells) == 0 {
+			decodedCells = make([][]byte, len(req.Data))
+			for i, cellHex := range req.Data {
+				if decoded, err := hex.DecodeString(cellHex); err == nil {
+					decodedCells[i] = decoded
+				} else {
+					decodedCells[i] = []byte(cellHex)
+				}
 			}
 		}
 
 		pubMu.Lock()
 		publishedRecords[req.BlockID] = publishedBlockRecord{
-			Req:        req,
+			Req:        *req,
 			DecodedODS: decodedCells,
 		}
 		pubMu.Unlock()

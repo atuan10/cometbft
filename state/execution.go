@@ -213,10 +213,10 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 	}
 
 	// CDA Pipeline Backpressure Gate:
-	// If the pipeline is saturated (in_flight >= 2), wait up to bounded duration (default 400ms)
-	// for the in-flight block to finish. If still saturated, throttle proposal to lean block to keep consensus moving.
-	if len(txl) > 0 && os.Getenv("DISABLE_AUTO_PUBLISHER_PUSH") != "true" {
-		maxWait := 400 * time.Millisecond
+	// If the pipeline is saturated (in_flight >= 2), wait up to bounded duration (default 15s)
+	// for an in-flight block to finish DA custody so Consensus and DA heights stay within maxInFlight.
+	if len(txl) > 0 && os.Getenv("DISABLE_CDA_BACKPRESSURE") != "true" && (os.Getenv("DISABLE_AUTO_PUBLISHER_PUSH") != "true" || os.Getenv("PUBLISHER_URL") != "") {
+		maxWait := 15 * time.Second
 		if envWait := os.Getenv("CDA_BACKPRESSURE_MAX_WAIT"); envWait != "" {
 			if d, err := time.ParseDuration(envWait); err == nil && d > 0 {
 				maxWait = d
@@ -445,8 +445,10 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	}
 
 	// Push committed block to Publisher Node
-	if os.Getenv("DISABLE_AUTO_PUBLISHER_PUSH") != "true" {
+	if os.Getenv("DISABLE_AUTO_PUBLISHER_PUSH") != "true" && len(block.Data.ODS.Cells) > 0 {
+		IncrementLocalPushInFlight()
 		go func(b *types.Block) {
+			defer DecrementLocalPushInFlight()
 			pusher := NewPublisherPusher("")
 			_ = pusher.PushCommittedBlock(b)
 		}(block)
