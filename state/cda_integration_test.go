@@ -358,9 +358,14 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 
 		// 7. TAMPER TEST (at height 1): Ensure Validator rejects block if an attacker tampers with CommitsRoot
 		if h == 1 {
-			tamperedBlock := *proposalBlock
+			tamperedBlock := &types.Block{
+				Header:     proposalBlock.Header,
+				Data:       proposalBlock.Data,
+				Evidence:   proposalBlock.Evidence,
+				LastCommit: proposalBlock.LastCommit,
+			}
 			tamperedBlock.Header.CommitsRoot = []byte("malicious_tampered_commits_root_")
-			errTamper := sm.VerifyCDAHeader(&tamperedBlock)
+			errTamper := sm.VerifyCDAHeader(tamperedBlock)
 			require.Error(t, errTamper, "Consensus Validator must reject block with tampered CDA Header")
 			require.Contains(t, errTamper.Error(), "mismatched CommitsRoot", "Error message must indicate CommitsRoot mismatch")
 			t.Logf("[Consensus Layer: Validator] ✅ SUCCESS: Correctly REJECTED tampered block proposal with error: %v", errTamper)
@@ -403,11 +408,16 @@ func TestTransactionFlowConsensusCDAHeaderComputationAndVerification(t *testing.
 			// 10. ADVERSARIAL LIVE INJECTION TEST (after block 1):
 			// Send an illegitimate tampered block directly to the live Publisher to ensure it enforces BFT Header verification
 			if h == 1 {
-				tamperedPushBlock := *proposalBlock
+				tamperedPushBlock := &types.Block{
+					Header:     proposalBlock.Header,
+					Data:       proposalBlock.Data,
+					Evidence:   proposalBlock.Evidence,
+					LastCommit: proposalBlock.LastCommit,
+				}
 				tamperedPushBlock.Header.Height = h
 				tamperedPushBlock.Header.CommitsRoot = []byte("tampered_live_publisher_root_32")
 				t.Logf("[Adversarial Test] Injecting tampered block to live Publisher (expecting HTTP 422 rejection)...")
-				errTampered := pusher.PushCommittedBlock(&tamperedPushBlock)
+				errTampered := pusher.PushCommittedBlock(tamperedPushBlock)
 				require.Error(t, errTampered, "Live Publisher MUST reject block with tampered CDA Header")
 				require.Contains(t, errTampered.Error(), "422", "Live Publisher MUST return HTTP 422 Unprocessable Entity")
 				t.Logf("[Adversarial Test] ✅ Live Publisher correctly REJECTED tampered block with HTTP 422 Unprocessable Entity!")
@@ -494,11 +504,15 @@ func TestNamespaceOrderedProposal_MempoolReorderingAndVerification(t *testing.T)
 	// Swap index 1 ("auth/meta") and index 3 ("finance/meta")
 	tamperedTxs[1], tamperedTxs[3] = tamperedTxs[3], tamperedTxs[1]
 
-	tamperedBlock := *proposalBlock
-	tamperedBlock.Data.Txs = tamperedTxs
+	tamperedBlock := &types.Block{
+		Header:     proposalBlock.Header,
+		Data:       types.Data{Txs: tamperedTxs, ODS: proposalBlock.Data.ODS},
+		Evidence:   proposalBlock.Evidence,
+		LastCommit: proposalBlock.LastCommit,
+	}
 
 	// Validator MUST reject tamperedBlock with invalid transaction order
-	errTamper := sm.VerifyCDAHeader(&tamperedBlock)
+	errTamper := sm.VerifyCDAHeader(tamperedBlock)
 	require.Error(t, errTamper, "Validator must reject block proposal with out-of-order transactions")
 	require.Contains(t, errTamper.Error(), "invalid block transaction order", "Error message must indicate transaction ordering violation")
 	t.Logf("✅ Successfully verified that unsorted proposal is rejected: %v", errTamper)
